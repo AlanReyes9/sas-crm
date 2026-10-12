@@ -22,6 +22,8 @@ export function WhatsAppPage() {
   const [adding, setAdding] = useState(false);
   const [qrs, setQrs] = useState<Record<string, string | undefined>>({});
   const { data, isLoading } = useQuery({ queryKey: ["wa-sessions"], queryFn: () => api.get<Session[]>("/whatsapp/sessions") });
+  const caps = useQuery({ queryKey: ["wa-caps"], queryFn: () => api.get<{ whatsappWeb: boolean }>("/whatsapp/capabilities") });
+  const qrSupported = caps.data?.whatsappWeb !== false;
   const inv = () => qc.invalidateQueries({ queryKey: ["wa-sessions"] });
 
   useSocketEvent(
@@ -50,11 +52,23 @@ export function WhatsAppPage() {
         title="WhatsApp"
         subtitle="Vincula números por QR (WhatsApp Web) o usa la API oficial de Meta / Twilio. Puedes combinar varios."
         actions={
-          <Button onClick={() => setAdding(true)}>
-            <Plus className="h-4 w-4" /> Vincular número
-          </Button>
+          qrSupported && (
+            <Button onClick={() => setAdding(true)}>
+              <Plus className="h-4 w-4" /> Vincular número
+            </Button>
+          )
         }
       />
+      {!qrSupported && (
+        <div className="mb-6 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+          Este despliegue es serverless, así que la vinculación por QR (WhatsApp Web) no está disponible: necesita un servidor
+          que mantenga la sesión abierta. Conecta WhatsApp con <b>Meta Cloud API</b> o <b>Twilio</b> en{" "}
+          <Link to="/settings" className="font-medium underline">
+            Ajustes → Proveedores
+          </Link>
+          , o despliega con Docker para usar el QR.
+        </div>
+      )}
       {isLoading && <Spinner />}
       <div className="grid gap-4 md:grid-cols-2">
         {data?.map((s) => {

@@ -6,8 +6,11 @@ const TICK_SECONDS = 5;
 let timer: NodeJS.Timeout | null = null;
 let busy = false;
 
-/** Un ciclo del planificador: campañas programadas, lotes de envío y workflows en espera. */
-export async function tick() {
+/**
+ * Un ciclo del planificador: campañas programadas, lotes de envío y workflows en espera.
+ * `elapsedSeconds` dimensiona el lote de cada campaña según su límite por minuto.
+ */
+export async function tick(elapsedSeconds = TICK_SECONDS) {
   if (busy) return;
   busy = true;
   try {
@@ -15,7 +18,7 @@ export async function tick() {
     for (const c of due) await launchCampaign(c).catch((e) => console.error("[scheduler] launch", c.id, e.message));
 
     const runningCampaigns = await prisma.campaign.findMany({ where: { status: "RUNNING" } });
-    await Promise.all(runningCampaigns.map((c) => processCampaignBatch(c, TICK_SECONDS)));
+    await Promise.all(runningCampaigns.map((c) => processCampaignBatch(c, elapsedSeconds)));
 
     await resumeDueRuns();
   } catch (e) {

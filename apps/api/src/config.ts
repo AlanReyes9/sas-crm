@@ -13,7 +13,12 @@ export const config = {
     "ENCRYPTION_KEY",
     process.env.NODE_ENV === "test" ? "0".repeat(64) : undefined,
   ),
-  publicUrl: (process.env.PUBLIC_URL ?? "http://localhost:4000").replace(/\/$/, ""),
+  publicUrl: (
+    process.env.PUBLIC_URL ||
+    (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "http://localhost:4000")
+  ).replace(/\/$/, ""),
+  /** Protege /api/cron/tick (Vercel Cron envía "Authorization: Bearer <CRON_SECRET>"). */
+  cronSecret: process.env.CRON_SECRET ?? "",
   webOrigin: process.env.WEB_ORIGIN ?? "http://localhost:5173",
   waSessionsDir: process.env.WA_SESSIONS_DIR ?? "./storage/wa-sessions",
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",

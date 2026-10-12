@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { Call, Contact, Conversation, Message } from "@prisma/client";
+import { background } from "../lib/background.js";
 
 /** Bus de eventos de dominio. Desacopla los módulos del motor de automatizaciones. */
 export interface DomainEvents {
@@ -15,7 +16,7 @@ class TypedBus extends EventEmitter {
   }
   onEvent<K extends keyof DomainEvents>(name: K, fn: (p: DomainEvents[K]) => void | Promise<void>) {
     return this.on(name, (p) => {
-      Promise.resolve(fn(p)).catch((e) => console.error(`[bus] ${name}`, e));
+      background(Promise.resolve().then(() => fn(p)));
     });
   }
 }

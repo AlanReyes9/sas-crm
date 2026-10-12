@@ -4,9 +4,12 @@ import { apiBase, tokenStore } from "./api";
 
 let socket: Socket | null = null;
 
+/** En hosting serverless (Vercel) no hay WebSockets: la UI refresca por polling. */
+export const realtimeEnabled = import.meta.env.VITE_REALTIME !== "off";
+
 export function getSocket(): Socket | null {
   const token = tokenStore.get();
-  if (!token) return null;
+  if (!token || !realtimeEnabled) return null;
   if (!socket) {
     socket = io(apiBase || undefined, { auth: { token }, transports: ["websocket", "polling"] });
   }

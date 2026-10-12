@@ -14,9 +14,11 @@
     "typecheck": "npm run typecheck --workspaces",
     "test": "npm test --workspace apps/api",
     "db:migrate": "npm run db:migrate --workspace apps/api",
-    "db:seed": "npm run db:seed --workspace apps/api"
+    "db:seed": "npm run db:seed --workspace apps/api",
+    "vercel-build": "node scripts/vercel-build.mjs"
   },
   "engines": {
     "node": ">=20"
-  }
+  },
+  "type": "module"
 }

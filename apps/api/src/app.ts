@@ -5,6 +5,9 @@ import morgan from "morgan";
 import { ZodError } from "zod";
 import { Prisma } from "@prisma/client";
 import { config } from "./config.js";
+import { ah } from "./lib/async.js";
+import { background, isServerless } from "./lib/background.js";
+import { tick } from "./services/scheduler.js";
 import { HttpError } from "./lib/errors.js";
 import { requireAuth } from "./middleware/auth.js";
 import { authRouter } from "./routes/auth.js";
@@ -39,7 +42,34 @@ export function createApp() {
   app.use(express.urlencoded({ extended: false })); // webhooks de Twilio/Mailgun
   if (process.env.NODE_ENV !== "test") app.use(morgan("dev"));
 
-  app.get("/health", (_req, res) => res.json({ ok: true, service: "crm-nexus-api" }));
+  app.get("/health", (_req, res) => res.json({ ok: true, service: "crm-nexus-api", serverless: isServerless }));
+
+  // Planificador invocado desde fuera (Vercel Cron o cualquier cron externo).
+  app.get(
+    "/api/cron/tick",
+    ah(async (req, res) => {
+      if (!config.cronSecret || req.header("authorization") !== `Bearer ${config.cronSecret}`) {
+        throw new HttpError(401, "No autorizado");
+      }
+      await tick(60);
+      res.json({ ok: true });
+    }),
+  );
+
+  if (isServerless) {
+    // Sin procesos en segundo plano, aprovechamos el tráfico para avanzar campañas y
+    // workflows en espera (como mucho una vez cada 10 s por instancia).
+    let lastTick = 0;
+    app.use((_req, _res, next) => {
+      const now = Date.now();
+      if (now - lastTick > 10_000) {
+        const elapsed = lastTick ? Math.min(60, (now - lastTick) / 1000) : 10;
+        lastTick = now;
+        background(tick(elapsed));
+      }
+      next();
+    });
+  }
 
   // Públicos
   app.use("/api/auth", authRouter);

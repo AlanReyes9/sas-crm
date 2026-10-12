@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { background } from "../lib/background.js";
 import { isE164, isEmail } from "../lib/phone.js";
 import type { ProviderDefinition } from "./types.js";
 
@@ -23,11 +24,11 @@ export const mockProvider: ProviderDefinition = {
       async send(message) {
         const id = `mock_${crypto.randomUUID()}`;
         const fail = Math.random() * 100 < failRate;
-        setTimeout(() => {
-          void ctx.hooks
-            .statusUpdate(id, fail ? "FAILED" : "DELIVERED", fail ? "Fallo simulado" : undefined)
-            .catch(() => undefined);
-        }, delay).unref?.();
+        background(
+          new Promise((r) => setTimeout(r, delay)).then(() =>
+            ctx.hooks.statusUpdate(id, fail ? "FAILED" : "DELIVERED", fail ? "Fallo simulado" : undefined),
+          ),
+        );
         return { providerMessageId: id, status: "SENT", raw: { simulated: true, to: message.to } };
       },
       async test() {

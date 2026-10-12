@@ -2,7 +2,9 @@
 // Cada entidad de negocio pertenece a un Workspace (empresa cliente del SaaS).
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // rhel-openssl-3.0.x = runtime de Node en Vercel / AWS Lambda
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {

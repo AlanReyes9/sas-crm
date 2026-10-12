@@ -5,6 +5,7 @@ import { metaWhatsAppProvider } from "./meta-whatsapp.js";
 import { whatsappWebProvider } from "./whatsapp-web.js";
 import { mailgunProvider, resendProvider, sendgridProvider, smtpProvider } from "./email.js";
 import type { ProviderDefinition } from "./types.js";
+import { isServerless } from "../lib/background.js";
 
 /**
  * Catálogo de proveedores. Para añadir uno nuevo (Vonage, Plivo, Telnyx, 360dialog,
@@ -13,7 +14,8 @@ import type { ProviderDefinition } from "./types.js";
 const providers: ProviderDefinition[] = [
   twilioProvider,
   metaWhatsAppProvider,
-  whatsappWebProvider,
+  // WhatsApp Web mantiene un WebSocket abierto y sesiones en disco: no cabe en funciones serverless.
+  ...(isServerless ? [] : [whatsappWebProvider]),
   smtpProvider,
   sendgridProvider,
   resendProvider,

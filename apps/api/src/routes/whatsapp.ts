@@ -3,14 +3,20 @@ import { prisma } from "../db.js";
 import { ah } from "../lib/async.js";
 import { badRequest, notFound } from "../lib/errors.js";
 import { getWhatsAppWebState, logoutWhatsAppWeb, startWhatsAppWeb } from "../providers/whatsapp-web.js";
+import { isServerless } from "../lib/background.js";
 
 /** Gestión de sesiones de WhatsApp Web (vinculación por QR). */
 export const whatsappRouter = Router();
+
+whatsappRouter.get("/capabilities", (_req, res) => res.json({ whatsappWeb: !isServerless }));
 
 async function waConnection(workspaceId: string, id: string) {
   const conn = await prisma.providerConnection.findFirst({ where: { id, workspaceId } });
   if (!conn) throw notFound("Conexión");
   if (conn.provider !== "whatsapp_web") throw badRequest("La conexión no es de WhatsApp Web");
+  if (isServerless) {
+    throw badRequest("WhatsApp Web necesita un servidor persistente (Docker/VPS). En este despliegue usa Meta Cloud API o Twilio.");
+  }
   return conn;
 }
 
@@ -29,6 +35,7 @@ whatsappRouter.get(
         status: c.status,
         settings: c.settings,
         live: c.provider === "whatsapp_web" ? getWhatsAppWebState(c.id) : null,
+        supported: !(isServerless && c.provider === "whatsapp_web"),
       })),
     );
   }),
