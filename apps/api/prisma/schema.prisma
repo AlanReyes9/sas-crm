@@ -1,0 +1,421 @@
+// CRM NEXUS — modelo de datos multi-tenant.
+// Cada entidad de negocio pertenece a un Workspace (empresa cliente del SaaS).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────────── Enums ─────────────────────────────
+
+enum Role {
+  OWNER
+  ADMIN
+  AGENT
+}
+
+/// Canal lógico de comunicación. Es independiente del proveedor que lo entrega.
+enum Channel {
+  WHATSAPP
+  SMS
+  EMAIL
+  VOICE
+}
+
+enum ConversationStatus {
+  OPEN
+  PENDING
+  CLOSED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  RECEIVED
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  COMPLETED
+  PAUSED
+  FAILED
+}
+
+enum RecipientStatus {
+  PENDING
+  SENT
+  DELIVERED
+  FAILED
+  SKIPPED
+}
+
+enum CallDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum CallStatus {
+  QUEUED
+  RINGING
+  IN_PROGRESS
+  COMPLETED
+  BUSY
+  NO_ANSWER
+  FAILED
+  CANCELED
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  VALID
+  INVALID
+  UNKNOWN
+}
+
+enum WorkflowRunStatus {
+  RUNNING
+  WAITING
+  COMPLETED
+  FAILED
+}
+
+// ───────────────────────────── Tenancy ─────────────────────────────
+
+model Workspace {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  timezone  String   @default("America/Mexico_City")
+  createdAt DateTime @default(now())
+
+  memberships   Membership[]
+  contacts      Contact[]
+  tags          Tag[]
+  segments      Segment[]
+  conversations Conversation[]
+  templates     Template[]
+  campaigns     Campaign[]
+  calls         Call[]
+  connections   ProviderConnection[]
+  routes        ChannelRoute[]
+  workflows     Workflow[]
+  workflowRuns  WorkflowRun[]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  createdAt    DateTime @default(now())
+
+  memberships   Membership[]
+  conversations Conversation[] @relation("assignee")
+  calls         Call[]
+}
+
+model Membership {
+  id          String    @id @default(cuid())
+  role        Role      @default(AGENT)
+  userId      String
+  workspaceId String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, workspaceId])
+}
+
+// ───────────────────────────── Proveedores ─────────────────────────────
+
+/// Una cuenta conectada de un proveedor (Twilio, Meta, SMTP, SendGrid, WhatsApp Web...).
+/// Las credenciales se guardan cifradas (AES-256-GCM).
+model ProviderConnection {
+  id          String   @id @default(cuid())
+  workspaceId String
+  provider    String // twilio | meta_whatsapp | whatsapp_web | smtp | sendgrid | resend | mailgun | mock
+  name        String
+  credentials String // JSON cifrado
+  settings    Json     @default("{}") // datos no sensibles (números remitentes, from email...)
+  status      String   @default("active") // active | disconnected | error | pending
+  lastError   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  routes    ChannelRoute[]
+
+  @@index([workspaceId])
+}
+
+/// Enrutamiento: qué conexión entrega cada canal. Permite mezclar proveedores
+/// (p. ej. Twilio para voz/SMS, Meta para WhatsApp, SendGrid para correo).
+model ChannelRoute {
+  id           String  @id @default(cuid())
+  workspaceId  String
+  channel      Channel
+  connectionId String
+  priority     Int     @default(0) // menor = primero; los siguientes actúan como failover
+
+  workspace  Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  connection ProviderConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, channel, connectionId])
+  @@index([workspaceId, channel])
+}
+
+// ───────────────────────────── Contactos ─────────────────────────────
+
+model Contact {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  firstName    String   @default("")
+  lastName     String   @default("")
+  email        String?
+  phone        String? // E.164
+  whatsapp     String? // E.164, si difiere del teléfono
+  company      String?
+  notes        String?
+  customFields Json     @default("{}")
+  optOut       Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  workspace     Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  tags          ContactTag[]
+  verifications ChannelVerification[]
+  conversations Conversation[]
+  calls         Call[]
+  recipients    CampaignRecipient[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, phone])
+  @@index([workspaceId, email])
+}
+
+model Tag {
+  id          String       @id @default(cuid())
+  workspaceId String
+  name        String
+  color       String       @default("#6366f1")
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contacts    ContactTag[]
+
+  @@unique([workspaceId, name])
+}
+
+model ContactTag {
+  contactId String
+  tagId     String
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  tag       Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([contactId, tagId])
+}
+
+/// Segmento dinámico: reglas evaluadas en el momento (ver segments/rules.ts).
+model Segment {
+  id          String    @id @default(cuid())
+  workspaceId String
+  name        String
+  description String?
+  rules       Json
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+/// Resultado de verificar que un contacto es alcanzable por un canal.
+model ChannelVerification {
+  id         String             @id @default(cuid())
+  contactId  String
+  channel    Channel
+  address    String
+  status     VerificationStatus @default(UNVERIFIED)
+  detail     Json               @default("{}")
+  checkedAt  DateTime           @default(now())
+  contact    Contact            @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([contactId, channel])
+}
+
+// ───────────────────────────── Conversaciones ─────────────────────────────
+
+model Conversation {
+  id            String             @id @default(cuid())
+  workspaceId   String
+  contactId     String
+  channel       Channel
+  status        ConversationStatus @default(OPEN)
+  assigneeId    String?
+  connectionId  String? // conexión por la que llegó/sale la conversación
+  unreadCount   Int                @default(0)
+  lastMessageAt DateTime           @default(now())
+  lastPreview   String?
+  createdAt     DateTime           @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contact   Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  assignee  User?     @relation("assignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  messages  Message[]
+
+  @@unique([workspaceId, contactId, channel])
+  @@index([workspaceId, lastMessageAt])
+}
+
+model Message {
+  id                String           @id @default(cuid())
+  conversationId    String
+  direction         MessageDirection
+  channel           Channel
+  body              String
+  subject           String?
+  mediaUrl          String?
+  status            MessageStatus    @default(QUEUED)
+  provider          String?
+  providerMessageId String?
+  error             String?
+  metadata          Json             @default("{}")
+  createdAt         DateTime         @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@index([providerMessageId])
+}
+
+// ───────────────────────────── Plantillas y campañas ─────────────────────────────
+
+model Template {
+  id          String    @id @default(cuid())
+  workspaceId String
+  name        String
+  channel     Channel
+  category    String    @default("MARKETING") // MARKETING | UTILITY | AUTHENTICATION
+  language    String    @default("es")
+  subject     String? // correo
+  body        String // texto con variables {{contact.firstName}}
+  html        String? // correo HTML opcional
+  externalId  String? // nombre de la plantilla aprobada en Meta
+  status      String    @default("APPROVED") // DRAFT | PENDING | APPROVED | REJECTED
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaigns   Campaign[]
+
+  @@unique([workspaceId, name, channel])
+}
+
+model Campaign {
+  id          String         @id @default(cuid())
+  workspaceId String
+  name        String
+  channel     Channel
+  templateId  String?
+  body        String? // mensaje libre si no se usa plantilla
+  subject     String?
+  audience    Json // { segmentIds: [], tagIds: [], contactIds: [] }
+  status      CampaignStatus @default(DRAFT)
+  scheduledAt DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
+  ratePerMin  Int            @default(60)
+  createdAt   DateTime       @default(now())
+
+  workspace  Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  template   Template?           @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  recipients CampaignRecipient[]
+}
+
+model CampaignRecipient {
+  id         String          @id @default(cuid())
+  campaignId String
+  contactId  String
+  status     RecipientStatus @default(PENDING)
+  messageId  String?
+  error      String?
+  sentAt     DateTime?
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact  Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, contactId])
+  @@index([campaignId, status])
+}
+
+// ───────────────────────────── Telefonía ─────────────────────────────
+
+model Call {
+  id           String        @id @default(cuid())
+  workspaceId  String
+  contactId    String?
+  userId       String?
+  direction    CallDirection
+  from         String
+  to           String
+  status       CallStatus    @default(QUEUED)
+  duration     Int           @default(0)
+  recordingUrl String?
+  providerSid  String?       @unique
+  notes        String?
+  createdAt    DateTime      @default(now())
+  endedAt      DateTime?
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contact   Contact?  @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  user      User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt])
+}
+
+// ───────────────────────────── Automatizaciones ─────────────────────────────
+
+model Workflow {
+  id          String    @id @default(cuid())
+  workspaceId String
+  name        String
+  description String?
+  active      Boolean   @default(false)
+  triggerType String // message_received | contact_created | tag_added | webhook | manual | call_completed
+  graph       Json // { nodes: [], edges: [] } (formato React Flow)
+  webhookKey  String    @unique @default(cuid())
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  runs      WorkflowRun[]
+
+  @@index([workspaceId, triggerType, active])
+}
+
+model WorkflowRun {
+  id          String            @id @default(cuid())
+  workspaceId String
+  workflowId  String
+  status      WorkflowRunStatus @default(RUNNING)
+  context     Json
+  cursor      String? // id del nodo en el que se reanuda
+  resumeAt    DateTime?
+  logs        Json              @default("[]")
+  error       String?
+  startedAt   DateTime          @default(now())
+  finishedAt  DateTime?
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workflow  Workflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@index([status, resumeAt])
+  @@index([workflowId, startedAt])
+}

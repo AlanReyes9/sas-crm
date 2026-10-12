@@ -1,0 +1,8 @@
+node_modules
+dist
+.env
+*.log
+.wa-sessions
+apps/api/storage
+coverage
+.DS_Store
