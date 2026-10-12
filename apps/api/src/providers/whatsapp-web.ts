@@ -32,6 +32,8 @@ export interface WaInbound {
 }
 
 const sessions = new Map<string, WaSession>();
+/** Sesiones cerradas a propósito (logout / borrado): no se reconectan. */
+const stopping = new Set<string>();
 let inboundHandler: ((m: WaInbound) => Promise<void>) | null = null;
 
 export function onWhatsAppWebInbound(handler: (m: WaInbound) => Promise<void>) {
@@ -65,6 +67,7 @@ export async function startWhatsAppWeb(connectionId: string, workspaceId: string
   const existing = sessions.get(connectionId);
   if (existing && existing.status !== "closed") return existing;
 
+  stopping.delete(connectionId);
   const b = await loadBaileys();
   const pino = (await import("pino")).default;
   const { state, saveCreds } = await b.useMultiFileAuthState(sessionDir(connectionId));
@@ -110,12 +113,19 @@ export async function startWhatsAppWeb(connectionId: string, workspaceId: string
       const loggedOut = code === b.DisconnectReason?.loggedOut;
       session.status = "closed";
       sessions.delete(connectionId);
+      if (stopping.has(connectionId)) return;
+      const stillExists = await prisma.providerConnection.findUnique({ where: { id: connectionId } });
+      if (!stillExists) return;
       if (loggedOut) {
         await fs.rm(sessionDir(connectionId), { recursive: true, force: true });
         await setStatus(connectionId, workspaceId, "closed", { reason: "logged_out" });
-      } else {
-        // Reconexión automática (reinicios del servidor de WhatsApp, cambios de red...)
+      } else if (state.creds?.registered || code === b.DisconnectReason?.restartRequired) {
+        // Reconexión automática de sesiones ya vinculadas (reinicios del servidor, cortes de red...)
+        // y el reinicio que WhatsApp exige justo después de escanear el QR.
         setTimeout(() => void startWhatsAppWeb(connectionId, workspaceId).catch(() => undefined), 3000);
+      } else {
+        // El QR caducó sin escanearse: no generamos QRs indefinidamente.
+        await setStatus(connectionId, workspaceId, "closed", { reason: "qr_timeout" });
       }
     }
   });
@@ -155,9 +165,12 @@ export function getWhatsAppWebState(connectionId: string) {
 }
 
 export async function logoutWhatsAppWeb(connectionId: string) {
+  stopping.add(connectionId);
   const s = sessions.get(connectionId);
   if (s) {
-    await s.sock.logout().catch(() => undefined);
+    await Promise.resolve()
+      .then(() => (s.status === "open" ? s.sock.logout() : s.sock.end(undefined)))
+      .catch(() => undefined);
     sessions.delete(connectionId);
   }
   await fs.rm(sessionDir(connectionId), { recursive: true, force: true });

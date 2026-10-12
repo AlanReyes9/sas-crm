@@ -4,7 +4,7 @@
  * Usuario: demo@nexus.dev / nexus1234
  */
 import bcrypt from "bcryptjs";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, type Contact } from "@prisma/client";
 import { encryptJson } from "../src/lib/crypto.js";
 
 const prisma = new PrismaClient();
@@ -46,7 +46,7 @@ async function main() {
     ["Sofía", "García", "sofia@ejemplo.com", null, "Estudio SG", ["lead", "vip"]],
     ["Diego", "Torres", "diego@ejemplo.com", "+5215512345606", "Torres & Asoc.", ["cliente", "soporte"]],
   ] as const;
-  const contacts = [];
+  const contacts: Contact[] = [];
   for (const [firstName, lastName, mail, phone, company, t] of people) {
     const c = await prisma.contact.create({
       data: {
